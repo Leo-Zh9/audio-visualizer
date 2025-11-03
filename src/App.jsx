@@ -220,7 +220,7 @@ function createMorphTargets(baseGeom, radius) {
 // - Single BufferGeometry created once (STAR_COUNT points)
 // - GPU rotates stars counter-clockwise around Y, with slight speed variance by radius (depth parallax)
 // - Group is positioned at z = -STARFIELD_Z so stars remain behind sculpture at origin
-function Starfield() {
+function Starfield({ transitionActive = false, transitionProgress = 0, fadeProgress = 0 }) {
 	const groupRef = useRef()
 
 	// Build star positions/colors/radii/sizes once
@@ -272,6 +272,8 @@ function Starfield() {
 			uParallax: { value: STAR_PARALLAX_FACTOR },
 			uMaxRadius: { value: STARFIELD_RADIUS * 1.25 },
 			uOpacity: { value: 0.9 },
+			uTransitionProgress: { value: 0 }, // Black hole pull strength
+			uFadeProgress: { value: 0 }, // Fade-out after convergence
 		}
 		const vertexShader = `
 			attribute vec3 position0;
@@ -282,13 +284,18 @@ function Starfield() {
 			uniform float uBaseSpeed;
 			uniform float uParallax;
 			uniform float uMaxRadius;
+			uniform float uTransitionProgress;
+			uniform float uFadeProgress;
 			varying vec3 vColor;
 			varying float vAlpha;
 
 			void main(){
 				// Depth parallax factor: nearer stars (smaller radius) rotate slightly faster
 				float rNorm = clamp(radius / uMaxRadius, 0.0, 1.0);
-				float speed = uBaseSpeed * (1.0 + uParallax * (1.0 - rNorm)); // near faster than far
+				
+				// Speed up rotation during transition (exponential acceleration)
+				float speedMultiplier = 1.0 + uTransitionProgress * uTransitionProgress * 5.0;
+				float speed = uBaseSpeed * speedMultiplier * (1.0 + uParallax * (1.0 - rNorm));
 				float angle = uTime * speed;
 
 				// Rotate around Y axis (counter-clockwise when looking from +Z towards origin)
@@ -300,14 +307,30 @@ function Starfield() {
 					p.y,
 					p.x * s + p.z * c
 				);
+				
+				// Shrink orbital radius during transition - converge to center
+				vec3 finalPos = rotated;
+				if (uTransitionProgress > 0.01) {
+					// Shrink the orbital radius (distance from center) to zero
+					float radiusShrink = 1.0 - (uTransitionProgress * uTransitionProgress * uTransitionProgress);
+					finalPos *= radiusShrink;
+				}
 
-				vec4 mvPosition = modelViewMatrix * vec4(rotated, 1.0);
-				// Screen-size attenuation with stronger base scale
-				gl_PointSize = size * 2.8 * (300.0 / -mvPosition.z);
+				vec4 mvPosition = modelViewMatrix * vec4(finalPos, 1.0);
+				
+				// Shrink and fade stars as they approach center
+				float distToCenter = length(finalPos);
+				float fadeOut = smoothstep(0.0, 3.0, distToCenter); // Fade when closer than 3 units
+				float shrink = 1.0 - uTransitionProgress * 0.7;
+				
+				gl_PointSize = size * 2.8 * (300.0 / -mvPosition.z) * shrink;
 				gl_Position = projectionMatrix * mvPosition;
 
 				vColor = color;
-				vAlpha = 1.0;
+				// Fade during convergence, then additional fade-out over 2 seconds
+				float convergenceFade = fadeOut * (1.0 - uTransitionProgress * 0.5);
+				float finalAlpha = convergenceFade * (1.0 - uFadeProgress);
+				vAlpha = finalAlpha;
 			}
 		`
 		const fragmentShader = `
@@ -334,9 +357,11 @@ function Starfield() {
 		return mat
 	}, [])
 
-	// Time update for shader
+	// Time update for shader with transition
 	useFrame((state) => {
 		material.uniforms.uTime.value = state.clock.getElapsedTime()
+		material.uniforms.uTransitionProgress.value = transitionActive ? transitionProgress : 0
+		material.uniforms.uFadeProgress.value = transitionActive ? fadeProgress : 0
 	})
 
 	useEffect(() => {
@@ -515,7 +540,7 @@ function MeteorPool({ color = COLOR_SHOOTING_BLUE }) {
 }
 
 // ===================== Morphing Wireframe Sculpture (webbed) =====================
-function MorphingWireframe({ shapeIndex, setShapeIndex, wireColor, glowColor, bpm }) {
+function MorphingWireframe({ shapeIndex, setShapeIndex, wireColor, glowColor, bpm, transitionActive = false, transitionProgress = 0, fadeProgress = 0 }) {
 	const groupRef = useRef()
 	const mainWireRef = useRef()
 	const glowWireRef = useRef()
@@ -582,16 +607,50 @@ function MorphingWireframe({ shapeIndex, setShapeIndex, wireColor, glowColor, bp
 	useFrame((state, delta) => {
 		// Steady rotation; keep centered and scale 1
 		if (groupRef.current) {
-			groupRef.current.rotation.y += ROTATION_SPEED * delta
-			const targetX = TILT_FACTOR + (-mouseRef.current.y * MOUSE_PARALLAX)
-			const targetZ = mouseRef.current.x * MOUSE_PARALLAX
-			groupRef.current.rotation.x = THREE.MathUtils.lerp(groupRef.current.rotation.x, targetX, 0.08)
-			groupRef.current.rotation.z = THREE.MathUtils.lerp(groupRef.current.rotation.z, targetZ, 0.08)
-			groupRef.current.position.set(0, 0, 0)
-
-			// ✨ NEW: BPM-based pulse effect (only when a song is selected)
-			if (bpm && bpm > 0) {
-				const beatDuration = 60 / bpm // seconds per beat
+			// During transition: spin on y=x plane (diagonal axis)
+			if (transitionActive && transitionProgress > 0) {
+				// Accelerating spin as it gets pulled in
+				const spinMultiplier = 1 + transitionProgress * transitionProgress * 15
+				const spinSpeed = delta * 2 * spinMultiplier
+				groupRef.current.rotation.y += spinSpeed
+				groupRef.current.rotation.x += spinSpeed // Equal rotation for y=x plane
+				
+				// Shrink toward center
+				const shrinkAmount = 1 - (transitionProgress * transitionProgress * transitionProgress * 0.99)
+				groupRef.current.scale.setScalar(Math.max(shrinkAmount, 0.01))
+				
+				// Fade out materials - during convergence and then additional fade
+				const fadeStrength = Math.pow(transitionProgress, 0.8)
+				const additionalFade = Math.pow(1 - fadeProgress, 0.5) // Faster fade with square root
+				const finalOpacity = (1 - fadeStrength) * additionalFade
+				
+				if (mainWireRef.current) {
+					mainWireRef.current.opacity = finalOpacity
+				}
+				if (glowWireRef.current) {
+					glowWireRef.current.opacity = finalOpacity * 0.18
+				}
+				
+				// Also hide the entire group when fully faded
+				if (fadeProgress >= 0.95) {
+					groupRef.current.visible = false
+				}
+			} else {
+				// Normal rotation and pulsing
+				groupRef.current.visible = true // Ensure visible when not transitioning
+				groupRef.current.rotation.y += ROTATION_SPEED * delta
+				const targetX = TILT_FACTOR + (-mouseRef.current.y * MOUSE_PARALLAX)
+				const targetZ = mouseRef.current.x * MOUSE_PARALLAX
+				groupRef.current.rotation.x = THREE.MathUtils.lerp(groupRef.current.rotation.x, targetX, 0.08)
+				groupRef.current.rotation.z = THREE.MathUtils.lerp(groupRef.current.rotation.z, targetZ, 0.08)
+				
+				// Reset opacity
+				if (mainWireRef.current) mainWireRef.current.opacity = 0.95
+				if (glowWireRef.current) glowWireRef.current.opacity = 0.18
+				
+				// ✨ BPM-based pulse effect - defaults to 60 BPM when no song
+				const activeBPM = (bpm && bpm > 0 && bpm !== 'BPM unavailable') ? bpm : 60 // Default to 60 BPM
+				const beatDuration = 60 / activeBPM // seconds per beat
 				const elapsedTime = state.clock.getElapsedTime()
 				
 				// Get position within current beat (0 to 1)
@@ -612,10 +671,9 @@ function MorphingWireframe({ shapeIndex, setShapeIndex, wireColor, glowColor, bp
 				// Apply pulse to scale (1.0 to 1.0 + BPM_PULSE_SCALE)
 				const scaleAmount = 1 + (pulse * BPM_PULSE_SCALE)
 				groupRef.current.scale.setScalar(scaleAmount)
-			} else {
-				// No song selected: keep scale at 1.0 (no pulsing)
-				groupRef.current.scale.setScalar(1)
 			}
+			
+			groupRef.current.position.set(0, 0, 0)
 		}
 
 		// Morph interpolation (vertex buffer lerp)
@@ -698,9 +756,10 @@ function BackdropOverlays() {
 }
 
 // ===================== Minimal UI Overlay (labels/instructions + search) =====================
-function UIOverlay({ shapeIndex, onSubmitQuery, trackTitle, trackArtist, trackUrl, isLoading, bpm }) {
+function UIOverlay({ shapeIndex, onSubmitQuery, trackTitle, trackArtist, trackUrl, isLoading, bpm, transitionActive }) {
 	const label = shapeIndex === 0 ? 'Sphere' : shapeIndex === 1 ? 'Tetrahedron' : 'Cube'
 	const [value, setValue] = useState('')
+	const [isHovered, setIsHovered] = useState(false)
 	return (
 		<>
 			<style>{`
@@ -774,8 +833,23 @@ function UIOverlay({ shapeIndex, onSubmitQuery, trackTitle, trackArtist, trackUr
 					<span>Audio Visualization</span>
 				</div>
 
-				{/* Centered search bar */}
-				<div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', width: 'min(640px, 76vw)', pointerEvents: 'auto', zIndex: 30 }}>
+				{/* Search bar - glides to bottom on transition */}
+				<div 
+					style={{ 
+						position: 'absolute', 
+						top: transitionActive ? 'auto' : '50%',
+						bottom: transitionActive ? '30px' : 'auto',
+						left: '50%', 
+						transform: transitionActive ? 'translateX(-50%)' : 'translate(-50%, -50%)', 
+						width: 'min(640px, 76vw)', 
+						pointerEvents: 'auto', 
+						zIndex: 30,
+						opacity: transitionActive ? (isHovered ? 1 : 0.3) : 1,
+						transition: 'top 1.3s ease, bottom 1.3s ease, transform 1.3s ease, opacity 0.8s ease'
+					}}
+					onMouseEnter={() => setIsHovered(true)}
+					onMouseLeave={() => setIsHovered(false)}
+				>
 					<div style={{ position: 'relative' }}>
 						{/* Icon */}
 						<svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"
@@ -864,12 +938,19 @@ export default function App() {
 	const [spotifyUrl, setSpotifyUrl] = useState(null) // NEW: Store actual Spotify URL from backend
 	const [isLoading, setIsLoading] = useState(false)
 	const [bpm, setBpm] = useState(120) // ✨ NEW: BPM state for audio visualization
+	const [transitionActive, setTransitionActive] = useState(false) // Black hole transition state
+	const [transitionProgress, setTransitionProgress] = useState(0) // 0 to 1 (convergence)
+	const [fadeProgress, setFadeProgress] = useState(0) // 0 to 1 (fade-out after convergence)
 	const trackUrl = spotifyUrl || null // Use backend-provided Spotify URL
 
 	const handleSubmitQuery = useCallback(async (text) => {
 		if (!text.trim()) return
 
 		setIsLoading(true)
+		
+		// Start black hole transition
+		setTransitionActive(true)
+		setTransitionProgress(0)
 
 		try {
 			// Use API_BASE for production deployment
@@ -932,11 +1013,44 @@ export default function App() {
 		// Morph to next shape
 		setShapeIndex((prev) => (prev + 1) % 3)
 	}, [])
+	
+	// Manage black hole transition progress (8s convergence + 2s fade)
+	useEffect(() => {
+		if (!transitionActive) return
+		
+		const startTime = performance.now()
+		const convergeDuration = 8000 // 8 seconds convergence
+		const fadeDuration = 2000 // 2 seconds fade-out
+		const totalDuration = convergeDuration + fadeDuration
+		
+		const animate = () => {
+			const elapsed = performance.now() - startTime
+			
+			if (elapsed < convergeDuration) {
+				// Phase 1: Convergence (0-8s)
+				const progress = Math.min(elapsed / convergeDuration, 1)
+				setTransitionProgress(progress)
+				setFadeProgress(0)
+			} else {
+				// Phase 2: Fade-out (8-10s)
+				setTransitionProgress(1) // Keep at full convergence
+				const fadeElapsed = elapsed - convergeDuration
+				const fade = Math.min(fadeElapsed / fadeDuration, 1)
+				setFadeProgress(fade)
+			}
+			
+			if (elapsed < totalDuration) {
+				requestAnimationFrame(animate)
+			}
+		}
+		
+		requestAnimationFrame(animate)
+	}, [transitionActive])
 
 	return (
 		<div style={{ width: '100vw', height: '100vh', background: '#000', position: 'relative' }}>
 			<BackdropOverlays />
-			<UIOverlay shapeIndex={shapeIndex} onSubmitQuery={handleSubmitQuery} trackTitle={trackTitle} trackArtist={trackArtist} trackUrl={trackUrl} isLoading={isLoading} bpm={bpm} />
+			<UIOverlay shapeIndex={shapeIndex} onSubmitQuery={handleSubmitQuery} trackTitle={trackTitle} trackArtist={trackArtist} trackUrl={trackUrl} isLoading={isLoading} bpm={bpm} transitionActive={transitionActive} />
 			<Canvas
 				camera={{ position: [0, 0, 7], fov: 50 }}
 				dpr={Math.min(window.devicePixelRatio, 2)}
@@ -948,14 +1062,14 @@ export default function App() {
 				<directionalLight position={[-4, -3, -5]} intensity={0.2} />
 
 				{/* Cosmic background */}
-				<Starfield />
+				<Starfield transitionActive={transitionActive} transitionProgress={transitionProgress} fadeProgress={fadeProgress} />
 				{/* Two meteor pools with different hues */}
 				<MeteorPool color={COLOR_SHOOTING_BLUE} />
 				<MeteorPool color={COLOR_METEOR_PURPLE} />
 
 				{/* Morphing, centered webbed wireframe sculpture */}
 				{/* ✨ NEW: Pass BPM prop for audio-reactive visualization */}
-				<MorphingWireframe shapeIndex={shapeIndex} setShapeIndex={setShapeIndex} wireColor={wireColor} glowColor={glowColor} bpm={bpm} />
+				<MorphingWireframe shapeIndex={shapeIndex} setShapeIndex={setShapeIndex} wireColor={wireColor} glowColor={glowColor} bpm={bpm} transitionActive={transitionActive} transitionProgress={transitionProgress} fadeProgress={fadeProgress} />
 
 				{/* Postprocessing: soft bloom + vignette + faint noise */}
 				<EffectComposer multisampling={0}>
