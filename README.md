@@ -163,7 +163,9 @@ git push origin main
 │   ├── index.css                         # Global styles and design tokens
 │   └── main.jsx                          # React entry point
 ├── api/
-│   └── song-info.js                      # Serverless function (BPM scraper + KV cache)
+│   ├── search.js                         # Spotify track search endpoint
+│   ├── features.js                       # Audio features endpoint
+│   └── song-info.js                      # BPM scraper with KV cache
 ├── backend/                              # Legacy Node/Express server (unused in production)
 │   ├── server.js
 │   ├── routes/
@@ -176,9 +178,12 @@ git push origin main
 
 **Production Stack:**
 - Frontend: Vite + React + Three.js (deployed to Vercel CDN)
-- Backend: Vercel Serverless Function at `/api/song-info`
+- Backend: Three Vercel Serverless Functions
+  - `/api/search` - Spotify track search
+  - `/api/features/:trackId` - Audio features (BPM, key, genre)
+  - `/api/song-info` - SongBPM.com scraper with hybrid caching
 - Database: Vercel KV (Redis) for persistent caching
-- External APIs: Spotify Web API, SongBPM.com (scraped)
+- External APIs: Spotify Web API, SongBPM.com (web scraping)
 
 ## License
 
