@@ -79,7 +79,8 @@ async function getBPMFromPython(artist, songTitle) {
 				// Return in the format expected by the route handler
 				resolve({
 					bpm: result.bpm,
-					key: null // Python script doesn't extract key yet (can be added)
+					key: result.key || null,
+					genre: result.genre || null
 				})
 				
 			} catch (error) {
@@ -152,12 +153,13 @@ router.get('/', async (req, res) => {
 		// Get BPM using Python scraper
 		const result = await getBPM(song, artist)
 
-		// Return BPM response
+		// Return song info response (BPM, key, genre)
 		res.json({
 			song: song,
 			artist: artist,
 			bpm: result.bpm,
-			key: result.key || 'Unknown',
+			key: result.key || null,
+			genre: result.genre || null,
 			queried_at: new Date().toISOString(),
 			source: 'songbpm-python-scraper'
 		})

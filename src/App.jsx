@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { motion } from 'framer-motion'
 import CloudVisualizerContainer from './components/CloudVisualizerContainer'
 
 // Backend API configuration
@@ -27,30 +28,110 @@ function toTitleCase(str) {
 		.join(' ')
 }
 
+/**
+ * Map musical key and genre to color
+ * Returns a hex color string based on mood/tonality
+ */
+function mapKeyGenreToColor(key, genre) {
+	// Default purple
+	const defaultColor = '#9b83f7'
+	
+	// Musical key to color mapping (emotional association)
+	const keyColorMap = {
+		// Major keys - bright, warm colors
+		'C Major': '#FFD580',      // Golden yellow
+		'G Major': '#80DFFF',      // Sky blue
+		'D Major': '#99FFCC',      // Mint green
+		'A Major': '#FFB3BA',      // Soft pink
+		'E Major': '#FFDFBA',      // Peach
+		'B Major': '#BAFFC9',      // Light green
+		'F Major': '#BAE1FF',      // Soft blue
+		'Bb Major': '#FFB3D9',     // Rose pink
+		'Eb Major': '#FFCCBC',     // Coral
+		'Ab Major': '#E1BEE7',     // Lavender
+		'Db Major': '#B2EBF2',     // Aqua
+		'Gb Major': '#DCEDC8',     // Lime
+		
+		// Minor keys - deep, emotional colors
+		'A Minor': '#B380FF',      // Purple
+		'E Minor': '#8080FF',      // Blue-purple
+		'B Minor': '#5A9FFF',      // Deep blue
+		'F# Minor': '#4A7BA7',     // Teal
+		'C# Minor': '#6B5B95',     // Deep purple
+		'G# Minor': '#7986CB',     // Periwinkle
+		'D Minor': '#9575CD',      // Violet
+		'G Minor': '#7E57C2',      // Purple-violet
+		'C Minor': '#5E35B1',      // Deep violet
+		'F Minor': '#673AB7',      // Purple
+		'Bb Minor': '#9C27B0',     // Magenta
+		'Eb Minor': '#8E24AA',     // Deep magenta
+	}
+	
+	// Genre to color mapping
+	const genreColorMap = {
+		'Pop': '#FFB3E6',          // Bright pink
+		'Rock': '#FF8566',         // Orange-red
+		'R&B': '#C77DFF',          // Purple-pink
+		'Hip Hop': '#9D4EDD',      // Deep purple
+		'Electronic': '#00F5FF',   // Cyan
+		'Dance': '#FF006E',        // Hot pink
+		'Jazz': '#8D5B4C',         // Warm brown
+		'Classical': '#F5F5DC',    // Cream
+		'Soul': '#D4AF37',         // Gold
+		'Indie': '#90BE6D',        // Sage green
+		'Alternative': '#577590',  // Blue-gray
+	}
+	
+	// Try key first (more specific)
+	if (key) {
+		// Normalize key string
+		const normalizedKey = key.trim()
+		if (keyColorMap[normalizedKey]) {
+			return keyColorMap[normalizedKey]
+		}
+		
+		// Check if it contains 'major' or 'minor'
+		const keyLower = normalizedKey.toLowerCase()
+		if (keyLower.includes('major')) {
+			return '#FFD580' // Default major: golden
+		} else if (keyLower.includes('minor')) {
+			return '#B380FF' // Default minor: purple
+		}
+	}
+	
+	// Fall back to genre
+	if (genre) {
+		const genreLower = genre.toLowerCase()
+		for (const [genreKey, color] of Object.entries(genreColorMap)) {
+			if (genreLower.includes(genreKey.toLowerCase())) {
+				return color
+			}
+		}
+	}
+	
+	// Ultimate fallback
+	return defaultColor
+}
+
 
 /**
- * BackdropOverlays - Subtle white gradient background
+ * BackdropOverlays - Gradient background with subtle grid
  */
 function BackdropOverlays() {
 	return (
 		<>
+			{/* Subtle thin-lined grid pattern */}
 			<div
 				style={{
 					pointerEvents: 'none',
 					position: 'absolute',
 					inset: 0,
-					background: 'radial-gradient(ellipse at center, rgba(255,255,255,1) 0%, rgba(248,249,250,1) 100%)',
-				}}
-			/>
-			<div
-				style={{
-					pointerEvents: 'none',
-					position: 'absolute',
-					inset: 0,
-					opacity: 0.015,
-					backgroundImage:
-						'url("data:image/svg+xml;utf8,<svg xmlns=\'http://www.w3.org/2000/svg\' width=\'200\' height=\'200\'><filter id=\'n\'><feTurbulence type=\'fractalNoise\' baseFrequency=\'0.9\' numOctaves=\'1\'/></filter><rect width=\'100%\' height=\'100%\' filter=\'url(%23n)\' opacity=\'0.5\'/></svg>")',
-					backgroundSize: '200px 200px',
+					backgroundImage: `
+						linear-gradient(to right, rgba(220, 215, 240, 0.12) 1px, transparent 1px),
+						linear-gradient(to bottom, rgba(220, 215, 240, 0.12) 1px, transparent 1px)
+					`,
+					backgroundSize: '60px 60px',
+					opacity: 0.6,
 				}}
 			/>
 		</>
@@ -122,7 +203,8 @@ function UIOverlay({ onSubmitQuery, trackTitle, trackArtist, trackUrl, isLoading
 			`}</style>
 			
 			<div className="absolute inset-0 pointer-events-none" style={{ 
-				fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" 
+				fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+				zIndex: 100
 			}}>
 				{/* Top center header with song info - FIXED at top */}
 				<div className="fixed top-0 left-0 right-0 flex justify-center pointer-events-auto" style={{ 
@@ -140,10 +222,10 @@ function UIOverlay({ onSubmitQuery, trackTitle, trackArtist, trackUrl, isLoading
 							gap: window.innerWidth < 768 ? 8 : 10,
 							padding: window.innerWidth < 768 ? '8px 16px' : '10px 20px',
 							borderRadius: 999,
-							background: 'rgba(255, 255, 255, 0.85)',
-							backdropFilter: 'blur(12px) saturate(180%)',
-							WebkitBackdropFilter: 'blur(12px) saturate(180%)',
-							color: '#1a1a1a',
+							background: 'rgba(255, 255, 255, 0.75)',
+							backdropFilter: 'blur(8px) saturate(120%)',
+							WebkitBackdropFilter: 'blur(8px) saturate(120%)',
+							color: '#202020',
 							textDecoration: 'none',
 							maxWidth: '90vw',
 							whiteSpace: 'nowrap',
@@ -200,7 +282,7 @@ function UIOverlay({ onSubmitQuery, trackTitle, trackArtist, trackUrl, isLoading
 					}}>
 						<span style={{ width: 5, height: 5, borderRadius: 9999, background: 'rgba(0,0,0,0.2)', animation: 'dotPulse 2s ease-in-out infinite' }} />
 						<span>Audio Visualizer</span>
-					</div>
+				</div>
 				)}
 
 				{/* Central search bar - FIXED position, never moves */}
@@ -269,10 +351,10 @@ function UIOverlay({ onSubmitQuery, trackTitle, trackArtist, trackUrl, isLoading
 							style={{
 								width: '100%',
 								padding: window.innerWidth < 768 ? '16px 24px 16px 48px' : '20px 28px 20px 56px',
-								background: 'rgba(255, 255, 255, 0.7)',
-								backdropFilter: 'blur(20px) saturate(180%)',
-								WebkitBackdropFilter: 'blur(20px) saturate(180%)',
-								border: '1px solid rgba(255, 255, 255, 0.8)',
+								background: 'rgba(255, 255, 255, 0.65)',
+								backdropFilter: 'blur(8px) saturate(120%)',
+								WebkitBackdropFilter: 'blur(8px) saturate(120%)',
+								border: '1px solid rgba(255, 255, 255, 0.9)',
 								borderRadius: 999,
 								color: '#1a1a1a',
 								fontSize: window.innerWidth < 768 ? '15px' : '16px',
@@ -323,10 +405,10 @@ function UIOverlay({ onSubmitQuery, trackTitle, trackArtist, trackUrl, isLoading
 					
 					{/* Helper text */}
 					{window.innerWidth >= 480 && (
-						<div style={{ 
+						<div className="subtitle" style={{ 
 							textAlign: 'center', 
 							marginTop: window.innerWidth < 768 ? '10px' : '14px', 
-							color: 'rgba(0,0,0,0.3)', 
+							color: '#808080', 
 							fontSize: window.innerWidth < 768 ? '11px' : '12px',
 							fontWeight: 400,
 							letterSpacing: '0.02em',
@@ -349,7 +431,7 @@ function UIOverlay({ onSubmitQuery, trackTitle, trackArtist, trackUrl, isLoading
 						zIndex: 50,
 					}}>
 						Audio-reactive visualization
-					</div>
+				</div>
 				)}
 			</div>
 		</>
@@ -357,7 +439,7 @@ function UIOverlay({ onSubmitQuery, trackTitle, trackArtist, trackUrl, isLoading
 }
 
 /**
- * Fetch BPM and audio features from backend
+ * Fetch BPM, key, and genre from backend
  */
 async function fetchAudioFeatures(trackId, songTitle, artistName) {
 	try {
@@ -368,20 +450,19 @@ async function fetchAudioFeatures(trackId, songTitle, artistName) {
 		
 		if (resp.ok) {
 			const features = await resp.json()
-			console.log('[frontend] BPM received:', features.tempo)
-			const tempo = features.tempo || null
-			if (tempo && tempo > 0) {
-				return tempo
+			console.log('[frontend] Song info received:', features)
+			return {
+				bpm: features.tempo && features.tempo > 0 ? features.tempo : null,
+				key: features.key || null,
+				genre: features.genre || null
 			}
-			console.warn('[frontend] BPM not available')
-			return null
 		} else {
 			console.warn('[frontend] Features request failed:', resp.status)
 		}
 	} catch (e) {
 		console.error('[frontend] Error fetching features:', e?.message || e)
 	}
-	return null
+	return { bpm: null, key: null, genre: null }
 }
 
 /**
@@ -394,9 +475,12 @@ export default function App() {
 	const [spotifyUrl, setSpotifyUrl] = useState(null)
 	const [isLoading, setIsLoading] = useState(false)
 	const [bpm, setBpm] = useState(null)
+	const [key, setKey] = useState(null)
+	const [genre, setGenre] = useState(null)
 	const [transitionActive, setTransitionActive] = useState(false)
 	
 	const trackUrl = spotifyUrl || null
+	const cloudColor = mapKeyGenreToColor(key, genre)
 
 	const handleSubmitQuery = useCallback(async (text) => {
 		if (!text.trim()) return
@@ -420,14 +504,18 @@ export default function App() {
 					setTrackId(track.trackId || '')
 					setSpotifyUrl(track.spotifyUrl || null)
 
-					// Fetch BPM
-					const tempo = await fetchAudioFeatures(track.trackId, track.title, track.artist)
-					setBpm(tempo)
+					// Fetch BPM, key, and genre
+					const features = await fetchAudioFeatures(track.trackId, track.title, track.artist)
+					setBpm(features.bpm)
+					setKey(features.key)
+					setGenre(features.genre)
 				} else {
 					setTrackTitle(text)
 					setTrackArtist('No exact match found')
 					setTrackId('')
 					setBpm(null)
+					setKey(null)
+					setGenre(null)
 				}
 			} else {
 				const errBody = await resp.text()
@@ -471,7 +559,7 @@ export default function App() {
 	}, [transitionActive])
 
 	return (
-		<div className="relative min-h-screen flex flex-col items-center justify-center overflow-hidden bg-white">
+		<div className="relative min-h-screen flex flex-col items-center justify-center overflow-hidden">
 			<BackdropOverlays />
 			
 			{/* Cloud visualization - background layer */}
@@ -481,14 +569,20 @@ export default function App() {
 					pointerEvents: 'none',
 				}}
 			>
-				<CloudVisualizerContainer 
-					isActive={!!trackTitle && !!trackArtist} 
-					bpm={bpm}
-				/>
+					<CloudVisualizerContainer 
+						isActive={!!trackTitle && !!trackArtist} 
+						bpm={bpm}
+						color={cloudColor}
+					/>
 			</div>
 			
-			{/* Main UI - foreground layer with fixed positioning */}
-			<main className="z-10 relative flex flex-col items-center justify-center w-full h-full">
+			{/* Main UI - animated entrance with stable positioning */}
+			<motion.main 
+				className="z-10 relative flex flex-col items-center justify-center w-full h-full"
+				initial={{ opacity: 0, y: 40 }}
+				animate={{ opacity: 1, y: 0 }}
+				transition={{ duration: 1.2, ease: "easeOut" }}
+			>
 				<UIOverlay 
 					onSubmitQuery={handleSubmitQuery} 
 					trackTitle={trackTitle} 
@@ -498,7 +592,7 @@ export default function App() {
 					bpm={bpm} 
 					transitionActive={transitionActive} 
 				/>
-			</main>
+			</motion.main>
 		</div>
 	)
 }

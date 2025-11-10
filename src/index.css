@@ -65,11 +65,12 @@ body,
   width: 100%;
   height: 100%;
   overflow: hidden;
-  background: var(--bg);
-  color: var(--text-main);
-  font-family: var(--font-sans);
+  background: linear-gradient(135deg, #fdfcff 0%, #f8f6ff 100%);
+  color: #1a1a1a;
+  font-family: "Inter", "Manrope", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-size: 16px;
   line-height: 1.5;
+  letter-spacing: -0.01em;
 }
 
 body {
@@ -78,6 +79,7 @@ body {
   position: fixed;
   width: 100%;
   height: 100%;
+  background: radial-gradient(circle at center, #f8f7ff 0%, #ece9f7 100%);
 }
 
 /* ===========================
@@ -156,6 +158,16 @@ button:focus {
 
 .text-subtle {
   color: var(--text-subtle);
+}
+
+.subtitle {
+  color: #808080;
+  font-weight: 400;
+}
+
+.heading {
+  color: #202020;
+  font-weight: 600;
 }
 
 .bg-glass {

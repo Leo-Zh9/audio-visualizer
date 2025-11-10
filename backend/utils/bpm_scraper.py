@@ -115,50 +115,86 @@ def fetch_page(url: str, timeout: int = 10) -> Optional[str]:
         return None
 
 
-def extract_bpm_from_html(html: str) -> Optional[int]:
+def extract_song_info_from_html(html: str) -> dict:
     """
-    Parse HTML and extract BPM value from songbpm.com page structure.
+    Parse HTML and extract BPM, key, and genre from songbpm.com page structure.
     
-    The page uses <dd> tags for metrics. BPM is typically a number between 40-240.
+    The page uses <dd> tags for metrics. Attempts to extract:
+    - BPM (numeric, 40-240 range)
+    - Key (e.g., "F minor", "C major")
+    - Genre (e.g., "Pop", "R&B")
     
     Args:
         html (str): HTML content of the page
         
     Returns:
-        Optional[int]: BPM value if found and valid, None otherwise
+        dict: {'bpm': int|None, 'key': str|None, 'genre': str|None}
     """
+    result = {'bpm': None, 'key': None, 'genre': None}
+    
     try:
         soup = BeautifulSoup(html, 'lxml')
+        
+        # Find all dt/dd pairs
+        dt_tags = soup.find_all('dt')
         dd_tags = soup.find_all('dd')
         
         if not dd_tags:
             logger.warning("No <dd> tags found on page")
-            return None
+            return result
         
         logger.debug(f"Found {len(dd_tags)} dd elements")
         
-        # Look for BPM value (numeric, not a time format, in valid range)
+        # Try to match dt labels with dd values
         for i, dd_tag in enumerate(dd_tags):
             text = dd_tag.get_text(strip=True)
             
             if not text:
                 continue
             
-            # Must be pure digits (not "3:22" or "Spotify")
-            if text.isdigit() and ':' not in text:
+            # Get corresponding dt label if available
+            label = ""
+            if i < len(dt_tags):
+                label = dt_tags[i].get_text(strip=True).lower()
+            
+            # Extract BPM (numeric, in valid range)
+            if text.isdigit() and ':' not in text and result['bpm'] is None:
                 bpm = int(text)
-                
-                # Validate reasonable BPM range
                 if 40 <= bpm <= 240:
+                    result['bpm'] = bpm
                     logger.info(f"Found BPM: {bpm}")
-                    return bpm
+            
+            # Extract Key (contains "major" or "minor")
+            if ('major' in text.lower() or 'minor' in text.lower()) and result['key'] is None:
+                result['key'] = text
+                logger.info(f"Found Key: {text}")
+            
+            # Extract Genre (common genres)
+            genres = ['pop', 'rock', 'r&b', 'hip hop', 'electronic', 'dance', 'jazz', 'classical', 'soul', 'indie', 'alternative']
+            text_lower = text.lower()
+            if any(genre in text_lower for genre in genres) and result['genre'] is None:
+                result['genre'] = text
+                logger.info(f"Found Genre: {text}")
         
-        logger.warning("BPM value not found in dd tags")
-        return None
+        return result
         
     except Exception as e:
         logger.error(f"Error parsing HTML: {e}")
-        return None
+        return result
+
+
+def extract_bpm_from_html(html: str) -> Optional[int]:
+    """
+    Legacy function - extracts only BPM for backward compatibility.
+    
+    Args:
+        html (str): HTML content of the page
+        
+    Returns:
+        Optional[int]: BPM value if found, None otherwise
+    """
+    info = extract_song_info_from_html(html)
+    return info['bpm']
 
 
 def find_song_url_on_artist_page(artist: str, song_name: str) -> Optional[str]:
@@ -222,21 +258,21 @@ def find_song_url_on_artist_page(artist: str, song_name: str) -> Optional[str]:
         return None
 
 
-def get_bpm_from_songbpm(artist: str, song_name: str, use_cache: bool = True) -> Optional[int]:
+def get_song_info_from_songbpm(artist: str, song_name: str, use_cache: bool = True) -> dict:
     """
-    Fetch the BPM for a given song from songbpm.com.
+    Fetch BPM, key, and genre for a given song from songbpm.com.
     
     This function implements a robust two-step approach:
     
     Step 1: Try direct URL
     - Construct URL: https://songbpm.com/@{artist}/{song}
-    - Attempt to fetch and extract BPM
+    - Attempt to fetch and extract song info
     
     Step 2: Fallback to artist page (if Step 1 fails)
     - Fetch artist page: https://songbpm.com/@{artist}
     - Find all song links
     - Match the song name (substring matching)
-    - Fetch the correct song page and extract BPM
+    - Fetch the correct song page and extract info
     
     Args:
         artist (str): Artist name (e.g., "Daniel Caesar")
@@ -244,38 +280,35 @@ def get_bpm_from_songbpm(artist: str, song_name: str, use_cache: bool = True) ->
         use_cache (bool): Whether to use cached results (default: True)
         
     Returns:
-        Optional[int]: BPM value if found, None otherwise
+        dict: {'bpm': int|None, 'key': str|None, 'genre': str|None}
         
     Examples:
-        >>> get_bpm_from_songbpm("Daniel Caesar", "Superpowers")
-        130
+        >>> get_song_info_from_songbpm("Daniel Caesar", "Superpowers")
+        {'bpm': 130, 'key': 'F minor', 'genre': 'R&B'}
         
-        >>> get_bpm_from_songbpm("The Weeknd", "Blinding Lights")
-        171
-        
-        >>> get_bpm_from_songbpm("Unknown Artist", "Fake Song")
-        None
+        >>> get_song_info_from_songbpm("The Weeknd", "Blinding Lights")
+        {'bpm': 171, 'key': 'F minor', 'genre': 'Pop'}
     """
     # Input validation
     if not artist or not song_name:
         logger.error("Both artist and song_name are required")
-        return None
+        return {'bpm': None, 'key': None, 'genre': None}
     
     artist = artist.strip()
     song_name = song_name.strip()
     
     if not artist or not song_name:
         logger.error("Artist and song_name cannot be empty")
-        return None
+        return {'bpm': None, 'key': None, 'genre': None}
     
     # Check cache
     cache_key = (artist.lower(), song_name.lower())
     if use_cache and cache_key in _bpm_cache:
-        cached_bpm = _bpm_cache[cache_key]
-        logger.info(f"Cache hit: BPM for '{song_name}' by {artist} = {cached_bpm}")
-        return cached_bpm
+        cached_info = _bpm_cache[cache_key]
+        logger.info(f"Cache hit: Info for '{song_name}' by {artist}")
+        return cached_info
     
-    logger.info(f"Fetching BPM for: '{song_name}' by {artist}")
+    logger.info(f"Fetching song info for: '{song_name}' by {artist}")
     
     # Step 1: Try direct URL
     artist_slug = normalize_for_url(artist)
@@ -286,12 +319,12 @@ def get_bpm_from_songbpm(artist: str, song_name: str, use_cache: bool = True) ->
     html = fetch_page(direct_url)
     
     if html:
-        bpm = extract_bpm_from_html(html)
-        if bpm is not None:
-            logger.info(f"Success: Found BPM = {bpm} (direct URL)")
+        info = extract_song_info_from_html(html)
+        if info['bpm'] is not None:
+            logger.info(f"Success: Found song info (direct URL)")
             if use_cache:
-                _bpm_cache[cache_key] = bpm
-            return bpm
+                _bpm_cache[cache_key] = info
+            return info
         else:
             logger.warning("Direct URL loaded but BPM not found")
     else:
@@ -301,32 +334,50 @@ def get_bpm_from_songbpm(artist: str, song_name: str, use_cache: bool = True) ->
     logger.info(f"Step 2: Falling back to artist page search")
     song_url = find_song_url_on_artist_page(artist, song_name)
     
+    empty_result = {'bpm': None, 'key': None, 'genre': None}
+    
     if not song_url:
         logger.error(f"Failed to find song on artist page")
         if use_cache:
-            _bpm_cache[cache_key] = None
-        return None
+            _bpm_cache[cache_key] = empty_result
+        return empty_result
     
     # Fetch the correct song URL
     html = fetch_page(song_url)
     if not html:
         logger.error(f"Failed to fetch song page: {song_url}")
         if use_cache:
-            _bpm_cache[cache_key] = None
-        return None
+            _bpm_cache[cache_key] = empty_result
+        return empty_result
     
-    bpm = extract_bpm_from_html(html)
+    info = extract_song_info_from_html(html)
     
-    if bpm is not None:
-        logger.info(f"Success: Found BPM = {bpm} (via artist page)")
+    if info['bpm'] is not None:
+        logger.info(f"Success: Found song info (via artist page)")
     else:
-        logger.error(f"Song page loaded but BPM not found")
+        logger.error(f"Song page loaded but info not found")
     
-    # Cache result (even if None)
+    # Cache result (even if empty)
     if use_cache:
-        _bpm_cache[cache_key] = bpm
+        _bpm_cache[cache_key] = info
     
-    return bpm
+    return info
+
+
+def get_bpm_from_songbpm(artist: str, song_name: str, use_cache: bool = True) -> Optional[int]:
+    """
+    Legacy function - fetches only BPM for backward compatibility.
+    
+    Args:
+        artist (str): Artist name
+        song_name (str): Song title
+        use_cache (bool): Whether to use cache
+        
+    Returns:
+        Optional[int]: BPM value if found, None otherwise
+    """
+    info = get_song_info_from_songbpm(artist, song_name, use_cache)
+    return info['bpm'] if info else None
 
 
 def clear_cache() -> None:
@@ -375,24 +426,30 @@ def main():
     artist = sys.argv[start_idx]
     song_name = sys.argv[start_idx + 1]
     
-    # Fetch BPM
-    bpm = get_bpm_from_songbpm(artist, song_name)
+    # Fetch song info (BPM, key, genre)
+    info = get_song_info_from_songbpm(artist, song_name)
     
     if json_output:
         # Output as JSON for easy parsing by Node.js
         result = {
             'artist': artist,
             'song': song_name,
-            'bpm': bpm,
-            'success': bpm is not None
+            'bpm': info['bpm'],
+            'key': info['key'],
+            'genre': info['genre'],
+            'success': info['bpm'] is not None
         }
         print(json.dumps(result))
     else:
         # Human-readable output
-        if bpm:
-            print(f"BPM: {bpm}")
+        if info['bpm']:
+            print(f"BPM: {info['bpm']}")
+            if info['key']:
+                print(f"Key: {info['key']}")
+            if info['genre']:
+                print(f"Genre: {info['genre']}")
         else:
-            print("BPM not found", file=sys.stderr)
+            print("Song info not found", file=sys.stderr)
             sys.exit(1)
 
 
