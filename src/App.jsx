@@ -439,28 +439,29 @@ function UIOverlay({ onSubmitQuery, trackTitle, trackArtist, trackUrl, isLoading
 }
 
 /**
- * Fetch BPM, key, and genre from backend
+ * Fetch BPM, key, and genre from serverless API
  */
 async function fetchAudioFeatures(trackId, songTitle, artistName) {
 	try {
-		const url = `${API_BASE}/api/features/${trackId}?title=${encodeURIComponent(songTitle)}&artist=${encodeURIComponent(artistName)}`
-		console.log('[frontend] Fetching audio features:', songTitle, '-', artistName)
+		// Use Vercel serverless function
+		const url = `/api/song-info?artist=${encodeURIComponent(artistName)}&title=${encodeURIComponent(songTitle)}`
+		console.log('[frontend] Fetching song info:', songTitle, '-', artistName)
 		
 		const resp = await fetch(url)
 		
 		if (resp.ok) {
-			const features = await resp.json()
-			console.log('[frontend] Song info received:', features)
+			const data = await resp.json()
+			console.log('[frontend] Song info received:', data)
 			return {
-				bpm: features.tempo && features.tempo > 0 ? features.tempo : null,
-				key: features.key || null,
-				genre: features.genre || null
+				bpm: data.bpm,
+				key: data.key,
+				genre: data.genre
 			}
 		} else {
-			console.warn('[frontend] Features request failed:', resp.status)
+			console.warn('[frontend] Song info request failed:', resp.status)
 		}
 	} catch (e) {
-		console.error('[frontend] Error fetching features:', e?.message || e)
+		console.error('[frontend] Error fetching song info:', e?.message || e)
 	}
 	return { bpm: null, key: null, genre: null }
 }

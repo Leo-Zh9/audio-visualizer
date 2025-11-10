@@ -1,6 +1,6 @@
 # Audio Visualizer
 
-An advanced 3D audio visualizer featuring custom GLSL shaders and vertex-level wave animation. The centerpiece is an organic cloud shape with individual vertex displacement driven by Fractal Brownian Motion noise and BPM-synchronized tidal waves that propagate across the surface. Each orbital ring revolves independently around the cloud at physics-based speeds.
+An advanced 3D audio visualizer featuring custom GLSL shaders and vertex-level wave animation. The system scrapes song metadata (BPM, musical key, genre) from SongBPM.com and visualizes it through an organic 3D cloud with individual vertex displacement driven by Fractal Brownian Motion noise. The cloud is surrounded by orbital rings that revolve like electrons around a nucleus. The entire scene responds to musical characteristics through dynamic color shifting and morphing animations.
 
 ## Technical Features
 
@@ -26,12 +26,19 @@ An advanced 3D audio visualizer featuring custom GLSL shaders and vertex-level w
 - Horizontal line texture using fwidth() for pixel-perfect 3px lines
 - Clamp-based brightness ceiling to prevent bloom washout
 
-**Additional Features**
-- Real-time BPM, key, and genre scraping from SongBPM.com
-- 8 independent orbital rings with physics-based revolution speeds
-- Cinematic postprocessing (Bloom, DepthOfField, Vignette, BrightnessContrast)
-- ACES tone mapping for filmic color response
-- Spotify Web API integration for track search
+**Data & Integration**
+- Real-time web scraping of SongBPM.com for BPM, key, and genre metadata
+- Hybrid caching system (in-memory + Vercel KV Redis) for sub-50ms cached responses
+- Musical key to color mapping system (24 keys with emotional color associations)
+- Spotify Web API integration for track search and metadata
+- Vercel serverless backend with automatic scaling
+
+**Visual Elements**
+- 8 independent orbital rings revolving at physics-based speeds (inner fast, outer slow)
+- Orbital rings rotate constantly regardless of BPM for ambient motion
+- Cinematic postprocessing stack (Bloom, DepthOfField, Vignette, BrightnessContrast)
+- ACES filmic tone mapping for professional color grading
+- Atmospheric fog and multi-point lighting system for depth
 
 ## Tech Stack
 
@@ -47,67 +54,131 @@ An advanced 3D audio visualizer featuring custom GLSL shaders and vertex-level w
 - Tailwind CSS
 
 **Backend**
-- Node.js
-- Express
-- Python
-- BeautifulSoup4
-- Requests
-- Spotify Web API
+- Vercel Serverless Functions (Node.js runtime)
+- Vercel KV (Redis-backed persistent cache)
+- Axios (HTTP client)
+- Cheerio (HTML parsing)
+- Spotify Web API (track search)
 
 ## Setup
 
 ### Prerequisites
 
 - Node.js v16 or higher
-- Python 3.x
-- Spotify API credentials
+- Vercel account
+- Spotify Developer account
 
-### Installation
+### Local Development
 
 1. Install dependencies:
 ```bash
 npm install
-cd backend && npm install
-pip install -r requirements.txt
 ```
 
-2. Configure Spotify API in `backend/.env`:
+2. Set up environment variables:
+
+Create `backend/.env` with your Spotify credentials:
 ```
-SPOTIFY_CLIENT_ID=your_client_id
-SPOTIFY_CLIENT_SECRET=your_client_secret
+SPOTIFY_CLIENT_ID=<get from developer.spotify.com/dashboard>
+SPOTIFY_CLIENT_SECRET=<get from developer.spotify.com/dashboard>
 ```
 
-3. Run the application:
+For local KV testing, create `.env.local` with Vercel KV credentials:
+```
+KV_URL=<from Vercel KV dashboard>
+KV_REST_API_URL=<from Vercel KV dashboard>
+KV_REST_API_TOKEN=<from Vercel KV dashboard>
+KV_REST_API_READ_ONLY_TOKEN=<from Vercel KV dashboard>
+```
+
+3. Run development server:
 ```bash
-# Terminal 1 - Backend
-cd backend
-npm run dev
-
-# Terminal 2 - Frontend
 npm run dev
 ```
 
-4. Open browser at `http://localhost:5173`
+4. Open http://localhost:5173
+
+For testing serverless functions locally:
+```bash
+npm i -g vercel
+vercel dev
+```
+
+### Production Deployment
+
+**Quick Start:**
+1. Push code to GitHub
+2. Import repository in Vercel dashboard
+3. Create Vercel KV database named `audio-visualizer-cache`
+4. Add Spotify credentials as environment variables
+5. Deploy
+
+**Detailed Steps:**
+
+**Step 1: Push to GitHub**
+```bash
+git add .
+git commit -m "Deploy audio visualizer"
+git push origin main
+```
+
+**Step 2: Import to Vercel**
+- Visit vercel.com and sign in
+- Click "Add New Project"
+- Import your GitHub repository
+- Vercel auto-detects Vite configuration
+
+**Step 3: Create KV Database**
+- In Vercel project dashboard: Storage → Create Database → KV
+- Database name: `audio-visualizer-cache`
+- Vercel automatically links KV environment variables to your project
+
+**Step 4: Add Spotify Credentials**
+- In Vercel project: Settings → Environment Variables
+- Add:
+  - `SPOTIFY_CLIENT_ID` (get from developer.spotify.com/dashboard)
+  - `SPOTIFY_CLIENT_SECRET` (get from developer.spotify.com/dashboard)
+
+**Step 5: Deploy**
+- Vercel automatically builds and deploys on push
+- Frontend served via CDN
+- Serverless function available at `/api/song-info`
+
+**Architecture:**
+- Frontend: Static Vite build on Vercel CDN
+- Backend: Serverless function at `/api/song-info`
+- Cache: Hybrid (in-memory 50 entries + KV Redis global)
+- TTL: 30 minutes
+- Cache hit latency: < 1ms (memory) or < 50ms (KV)
+- Cache miss latency: 1-3 seconds (web scraping)
 
 ## Project Structure
 
 ```
 ├── src/
-│   ├── App.jsx
+│   ├── App.jsx                           # Main application, UI, search logic
 │   ├── components/
-│   │   ├── CloudVisualizerContainer.jsx
-│   │   └── WindLines.jsx
-│   └── index.css
-├── backend/
+│   │   ├── CloudVisualizerContainer.jsx  # 3D scene with cloud and effects
+│   │   └── WindLines.jsx                 # Orbital ring system
+│   ├── index.css                         # Global styles and design tokens
+│   └── main.jsx                          # React entry point
+├── api/
+│   └── song-info.js                      # Serverless function (BPM scraper + KV cache)
+├── backend/                              # Legacy Node/Express server (unused in production)
 │   ├── server.js
 │   ├── routes/
-│   │   ├── search.js
-│   │   ├── features.js
-│   │   └── bpm.js
 │   └── utils/
-│       └── bpm_scraper.py
-└── package.json
+│       └── bpm_scraper.py                # Python scraper (replaced by JS version)
+├── vercel.json                           # Vercel deployment configuration
+├── package.json                          # Dependencies and scripts
+└── tailwind.config.js                    # Tailwind CSS configuration
 ```
+
+**Production Stack:**
+- Frontend: Vite + React + Three.js (deployed to Vercel CDN)
+- Backend: Vercel Serverless Function at `/api/song-info`
+- Database: Vercel KV (Redis) for persistent caching
+- External APIs: Spotify Web API, SongBPM.com (scraped)
 
 ## License
 
