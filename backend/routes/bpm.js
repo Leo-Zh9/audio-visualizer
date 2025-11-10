@@ -1,222 +1,118 @@
 import { Router } from 'express'
-import fetch from 'node-fetch'
-import * as cheerio from 'cheerio'
+import { spawn } from 'child_process'
+import { fileURLToPath } from 'url'
+import { dirname, join } from 'path'
+
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = dirname(__filename)
 
 const router = Router()
 
-// Helper function to create SongBPM URL slug
-function createSlug(text) {
-	// Clean up the text first (remove featured artists, parentheses, etc.)
-	let cleaned = text
-		.toLowerCase()
-		.replace(/\(feat\.?.*?\)/gi, '') // Remove (feat. Artist)
-		.replace(/\(ft\.?.*?\)/gi, '') // Remove (ft. Artist)
-		.replace(/feat\.?.*$/gi, '') // Remove feat. at end
-		.replace(/ft\.?.*$/gi, '') // Remove ft. at end
-		.replace(/[^a-z0-9\s]/g, '') // Remove special characters
-		.replace(/\s+/g, '-') // Replace spaces with hyphens
-		.replace(/-+/g, '-') // Remove multiple hyphens
-		.replace(/^-|-$/g, '') // Remove leading/trailing hyphens
-		.trim()
-	
-	return cleaned
-}
-
-// Search SongBPM.com to find the actual URL (handles hash URLs)
-async function findSongBPMUrl(songTitle, artistName) {
-	try {
-		// Try direct URL first (works for most songs)
-		const artistSlug = createSlug(artistName)
-		const songSlug = createSlug(songTitle)
-		const directUrl = `https://songbpm.com/@${artistSlug}/${songSlug}`
+/**
+ * Execute Python BPM scraper script
+ * 
+ * This function spawns a Python process to run the robust BPM scraper.
+ * The Python script handles:
+ * - URL normalization and construction
+ * - Web scraping with proper headers
+ * - HTML parsing to extract BPM
+ * - Caching to avoid redundant requests
+ * - Comprehensive error handling
+ * 
+ * @param {string} artist - Artist name
+ * @param {string} songTitle - Song title
+ * @returns {Promise<Object>} - Object with {bpm: number|null, key: string|null}
+ */
+async function getBPMFromPython(artist, songTitle) {
+	return new Promise((resolve, reject) => {
+		const pythonScriptPath = join(__dirname, '..', 'utils', 'bpm_scraper.py')
 		
-		console.log('[songbpm] Trying direct URL:', directUrl)
-		
-		const directResponse = await fetch(directUrl, {
-			method: 'HEAD', // Just check if it exists
-			headers: {
-				'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-			},
-			redirect: 'follow'
+		console.log('[bpm-python] Calling Python scraper:', {
+			artist,
+			song: songTitle,
+			scriptPath: pythonScriptPath
 		})
 		
-		if (directResponse.ok) {
-			console.log('[songbpm] Direct URL works!')
-			return directUrl
-		}
+		// Spawn Python process with --json flag for structured output
+		const pythonProcess = spawn('python', [pythonScriptPath, '--json', artist, songTitle])
 		
-		// Direct URL failed - search SongBPM.com to find the correct URL
-		console.log('[songbpm] Direct URL failed, searching SongBPM.com...')
-		const searchUrl = `https://songbpm.com/searches?query=${encodeURIComponent(songTitle + ' ' + artistName)}`
-		console.log('[songbpm] Search URL:', searchUrl)
+		let stdout = ''
+		let stderr = ''
 		
-		const searchResponse = await fetch(searchUrl, {
-			headers: {
-				'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-			},
-			redirect: 'follow'
+		pythonProcess.stdout.on('data', (data) => {
+			stdout += data.toString()
 		})
 		
-		if (!searchResponse.ok) {
-			throw new Error('Search failed on SongBPM.com')
-		}
-		
-		const searchHtml = await searchResponse.text()
-		const $search = cheerio.load(searchHtml)
-		
-		// Look for links to song pages (format: /@artist/song or /@artist/song-hash)
-		// Also check the actual final redirected URL
-		let foundUrl = null
-		
-		// Check if search redirected us directly to a song page
-		if (searchResponse.url && searchResponse.url.includes('/@')) {
-			foundUrl = searchResponse.url
-			console.log('[songbpm] Search redirected to song page:', foundUrl)
-		}
-		
-		// If not redirected, parse search results
-		if (!foundUrl) {
-			$search('a[href^="/@"]').each((i, elem) => {
-				const href = $search(elem).attr('href')
-				if (href && !foundUrl) {
-					// Get the full URL
-					const fullUrl = `https://songbpm.com${href}`
-					
-					// Check if this link matches our search (look in surrounding text too)
-					const linkText = $search(elem).text().toLowerCase()
-					const parentText = $search(elem).parent().text().toLowerCase()
-					
-					const matchesSong = linkText.includes(songTitle.toLowerCase()) || parentText.includes(songTitle.toLowerCase())
-					const matchesArtist = linkText.includes(artistName.toLowerCase()) || parentText.includes(artistName.toLowerCase())
-					
-					if (matchesSong && matchesArtist) {
-						foundUrl = fullUrl
-						console.log('[songbpm] Found exact match via search:', foundUrl)
-						return false // break
-					} else if (matchesSong || matchesArtist) {
-						// Partial match - store as backup but keep looking
-						if (!foundUrl) {
-							foundUrl = fullUrl
-							console.log('[songbpm] Found partial match (will use if no better match):', fullUrl)
-						}
-					}
-				}
-			})
-		}
-		
-		if (foundUrl) {
-			return foundUrl
-		}
-		
-		// If still not found, return direct URL and let it fail later
-		return directUrl
-		
-	} catch (error) {
-		console.error('[songbpm] URL lookup error:', error.message)
-		// Return direct URL as fallback
-		const artistSlug = createSlug(artistName)
-		const songSlug = createSlug(songTitle)
-		return `https://songbpm.com/@${artistSlug}/${songSlug}`
-	}
-}
-
-// Scrape SongBPM.com for BPM and key
-async function scrapeSongBPM(songTitle, artistName) {
-	try {
-		console.log('[songbpm] Scraping SongBPM for:', songTitle, 'by', artistName)
-
-		// Find the correct URL (handles hash URLs)
-		const url = await findSongBPMUrl(songTitle, artistName)
-		console.log('[songbpm] Using URL:', url)
-
-		// Fetch the page
-		const response = await fetch(url, {
-			headers: {
-				'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-			}
+		pythonProcess.stderr.on('data', (data) => {
+			stderr += data.toString()
 		})
-
-		if (!response.ok) {
-			if (response.status === 404) {
-				throw new Error('Song not found on SongBPM.com')
-			}
-			throw new Error(`HTTP ${response.status}: ${response.statusText}`)
-		}
-
-		const html = await response.text()
-		const $ = cheerio.load(html)
-
-		let bpm = null
-		let key = null
-
-		// Scrape BPM from <dd class="text-card-foreground mt-1 text-3xl font-semibold"> element
-		// This is where SongBPM.com displays the tempo in the Song Metrics section
-		$('dd.text-card-foreground').each((i, elem) => {
-			const text = $(elem).text().trim()
-			const numberMatch = text.match(/^\s*(\d{1,3})\s*$/)
-			
-			if (numberMatch) {
-				const value = parseInt(numberMatch[1], 10)
-				
-				// Check the label in the previous dt element
-				const prevDt = $(elem).prev('dt')
-				const labelText = prevDt.text().trim().toLowerCase()
-				
-				// If this is the Tempo/BPM field
-				if (labelText.includes('tempo') || labelText.includes('bpm')) {
-					if (value >= 40 && value <= 240) {
-						bpm = value
-						console.log('[songbpm] Found BPM:', bpm)
-						return false // break
-					}
-				}
+		
+		pythonProcess.on('close', (code) => {
+			if (code !== 0) {
+				console.error('[bpm-python] Python script failed:', stderr)
+				reject(new Error(`Python script exited with code ${code}: ${stderr}`))
+				return
 			}
 			
-			// Check for key (musical keys are letters like "C", "F#", etc.)
-			const keyMatch = text.match(/^\s*([A-G][#b♯♭]?)\s*$/i)
-			if (keyMatch) {
-				const prevDt = $(elem).prev('dt')
-				const labelText = prevDt.text().trim().toLowerCase()
-				if (labelText.includes('key')) {
-					key = keyMatch[1].toUpperCase()
-					console.log('[songbpm] Found key:', key)
+			try {
+				// Python logging goes to stderr, JSON result goes to stdout
+				// Find the JSON line (starts with { and ends with })
+				const lines = stdout.split('\n')
+				const jsonLine = lines.find(line => line.trim().startsWith('{') && line.trim().endsWith('}'))
+				
+				if (!jsonLine) {
+					console.error('[bpm-python] No JSON found in output:', stdout)
+					reject(new Error('No JSON output from Python script'))
+					return
 				}
+				
+				// Parse JSON output from Python script
+				const result = JSON.parse(jsonLine.trim())
+				
+				console.log('[bpm-python] Python result:', result)
+				
+				if (!result.success || result.bpm === null) {
+					reject(new Error('BPM not found on SongBPM.com'))
+					return
+				}
+				
+				// Return in the format expected by the route handler
+				resolve({
+					bpm: result.bpm,
+					key: null // Python script doesn't extract key yet (can be added)
+				})
+				
+			} catch (error) {
+				console.error('[bpm-python] Failed to parse Python output:', stdout)
+				reject(new Error('Failed to parse Python script output'))
 			}
 		})
-
-		// Validate BPM range
-		if (bpm && (bpm < 40 || bpm > 240)) {
-			console.warn('[songbpm] Invalid BPM detected:', bpm)
-			bpm = null
-		}
-
-		console.log('[songbpm] Extracted - BPM:', bpm, 'Key:', key)
-
-		if (!bpm) {
-			throw new Error('Could not find BPM on the page')
-		}
-
-		return { bpm, key }
-
-	} catch (error) {
-		console.error('[songbpm] Scraping error:', error.message)
-		throw error
-	}
+		
+		pythonProcess.on('error', (error) => {
+			console.error('[bpm-python] Failed to spawn Python process:', error.message)
+			reject(new Error('Failed to execute Python script. Is Python installed?'))
+		})
+	})
 }
 
-// YOUR SINGLE BPM METHOD: SongBPM.com scraping
+/**
+ * Main BPM detection function using Python scraper
+ * 
+ * @param {string} songTitle - Song title
+ * @param {string} artistName - Artist name
+ * @returns {Promise<Object>} - Object with {bpm: number, key: string|null}
+ */
 async function getBPM(songTitle, artistName) {
 	try {
 		console.log('[bpm] Getting BPM for:', songTitle, 'by', artistName)
 
-		const result = await scrapeSongBPM(songTitle, artistName)
+		const result = await getBPMFromPython(artistName, songTitle)
 
-		console.log('[bpm] Successfully got BPM:', result.bpm, 'Key:', result.key)
+		console.log('[bpm] Successfully got BPM:', result.bpm)
 		return result
 
 	} catch (error) {
 		console.error('[bpm] BPM detection failed:', error.message)
-		// NO FALLBACK - throw error so caller knows it failed
 		throw new Error(`Failed to get BPM: ${error.message}`)
 	}
 }
@@ -226,9 +122,9 @@ async function getBPM(songTitle, artistName) {
  *
  * Query parameters:
  * - song: Song title (required)
- * - artist: Artist name (optional)
+ * - artist: Artist name (required)
  *
- * Returns BPM using your single detection method
+ * Returns BPM using robust Python scraper from SongBPM.com
  */
 router.get('/', async (req, res) => {
 	try {
@@ -245,17 +141,25 @@ router.get('/', async (req, res) => {
 			})
 		}
 
-		// Get BPM and key using SongBPM scraping
+		if (!artist) {
+			return res.status(400).json({
+				error: 'bad_request',
+				details: 'Missing required parameter: artist',
+				example: '/api/bpm?song=Blinding%20Lights&artist=The%20Weeknd'
+			})
+		}
+
+		// Get BPM using Python scraper
 		const result = await getBPM(song, artist)
 
-		// Return BPM and key response
+		// Return BPM response
 		res.json({
 			song: song,
-			artist: artist || 'Unknown',
+			artist: artist,
 			bpm: result.bpm,
 			key: result.key || 'Unknown',
 			queried_at: new Date().toISOString(),
-			source: 'songbpm-scraping'
+			source: 'songbpm-python-scraper'
 		})
 
 	} catch (error) {
